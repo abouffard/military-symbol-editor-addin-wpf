@@ -43,6 +43,7 @@ using ArcGIS.Desktop.Editing;
 using ArcGIS.Core.Geometry;
 using CoordinateToolLibrary.Models;
 using System.Windows.Threading;
+using System.Diagnostics;
 
 namespace ProSymbolEditor
 {
@@ -56,6 +57,9 @@ namespace ProSymbolEditor
         private string _currentFeatureClassName = "";
         private FeatureClass _currentFeatureClass = null;
         private StyleProjectItem _militaryStyleItem = null;
+        //private StyleProjectItem _militaryStyleItem2 = null;
+        //private StyleProjectItem _militaryStyleItem3 = null;
+
         private SymbolStyleItem _selectedStyleItem = null;
         private SymbolSetMappings _symbolSetMappings = new SymbolSetMappings();
 
@@ -76,6 +80,8 @@ namespace ProSymbolEditor
         //Binded Variables - Text Boxes
         private string _searchString = "";
         private string _mapCoordinatesString = "";
+
+        public RelayCommand EnterKeyCommand { get; set; }
 
         //Binded Variables - List Boxes
         private IList<SymbolStyleItem> _styleItems = new List<SymbolStyleItem>();
@@ -112,8 +118,11 @@ namespace ProSymbolEditor
             ArcGIS.Desktop.Core.Events.ProjectOpenedEvent.Subscribe(async (args) =>
             {
                 //Add military style to project
-                Task<StyleProjectItem> getMilitaryStyle = GetMilitaryStyleAsync();
-                _militaryStyleItem = await getMilitaryStyle;
+                //Task<StyleProjectItem> getMilitaryStyle = GetMilitaryStyleAsync();
+                //_militaryStyleItem1 = await getMilitaryStyle;
+                _militaryStyleItem = await GetMilitaryStyleAsync();
+                //_militaryStyleItem2 = await GetMilitaryStyleAsync();
+                //_militaryStyleItem3 = await GetMilitaryStyleAsync();
             });
 
             ArcGIS.Desktop.Framework.Events.ActiveToolChangedEvent.Subscribe(OnActiveToolChanged);
@@ -133,11 +142,15 @@ namespace ProSymbolEditor
             BindingOperations.EnableCollectionSynchronization(MilitaryFieldsInspectorModel.CredibilityDomainValues, _credibilityLock);
 
             //Set up Commands
-            SearchResultCommand = new RelayCommand(SearchStylesAsync, param => true);
+            //SearchResultCommand = new RelayCommand(SearchStylesAsync, param => true);
             GoToTabCommand = new RelayCommand(GoToTab, param => true);
             //ActivateMapToolCommand = new RelayCommand(ActivateCoordinateMapTool, param => true);
             AddCoordinateToMapCommand = new RelayCommand(CreateNewFeatureAsync, CanCreatePolyFeatureFromCoordinates);
             ActivateAddToMapToolCommand = new RelayCommand(ActivateDrawFeatureSketchTool, param => true);
+            EnterKeyCommand = new RelayCommand(async () =>
+                {
+                    await SearchStylesAsync(null);
+                });
 
             _symbolAttributeSet.DateTimeValid = DateTime.Now;
             _symbolAttributeSet.DateTimeExpired = DateTime.Now;
@@ -187,7 +200,7 @@ namespace ProSymbolEditor
 
         #region Commands Get/Sets
 
-        public ICommand SearchResultCommand { get; set; }
+        //public ICommand SearchResultCommand { get; set; }
 
         public ICommand GoToTabCommand { get; set; }
 
@@ -212,9 +225,9 @@ namespace ProSymbolEditor
                 //SetProperty(ref _searchString, value, () => SearchString);
                 _searchString = value;
 
-                NotifyPropertyChanged(() => SearchString);
+                //NotifyPropertyChanged(() => SearchString);
 
-                SearchStylesAsync(null);
+                //SearchStylesAsync(null);
             }
         }
 
@@ -437,7 +450,7 @@ namespace ProSymbolEditor
             AddToMapToolEnabled = true;
         }
 
-        private async void SearchStylesAsync(object parameter)
+        private async Task SearchStylesAsync(object parameter)
         {
             //Make sure we have the military style file
             if (_militaryStyleItem == null)
@@ -831,9 +844,9 @@ namespace ProSymbolEditor
                 }
             });
         }
-
-        private Task SearchSymbols()
+        private Task SearchSymbols2()
         {
+            Stopwatch sw = Stopwatch.StartNew();
             return QueuedTask.Run(async () =>
             {
                 //Get results and populate symbol gallery
@@ -847,11 +860,51 @@ namespace ProSymbolEditor
                 (combinedSymbols as List<SymbolStyleItem>).AddRange(polygonSymbols);
 
                 int outParse;
-                _styleItems = combinedSymbols.Where(x => (x.Key.Length == 8 && int.TryParse(x.Key, out outParse)) || 
+                _styleItems = combinedSymbols.Where(x => (x.Key.Length == 8 && int.TryParse(x.Key, out outParse)) ||
                                                          (x.Key.Length == 10 && x.Key[8] == '_' && int.TryParse(x.Key[9].ToString(), out outParse))).ToList();
 
                 _progressDialog.Hide();
+
+                Debug.Print(string.Format("Search took {0} sec.", sw.ElapsedMilliseconds / 1000.0));
             });
+            
+        }
+        private async Task SearchSymbols()
+        {
+            //Stopwatch sw = Stopwatch.StartNew();
+            var list = new List<StyleItemType>() { StyleItemType.PointSymbol, StyleItemType.LineSymbol, StyleItemType.PolygonSymbol };
+
+            try
+            {
+
+                var combinedSymbols = new List<SymbolStyleItem>();
+                int outParse;
+
+                var symbolQuery = from type in list select Task<IList<SymbolStyleItem>>.Run(() => _militaryStyleItem.SearchSymbolsAsync(type, _searchString));
+
+                //// start the query
+                var searchTasks = symbolQuery.ToList();
+
+                while(searchTasks.Count > 0)
+                {
+                    var nextTask = await Task.WhenAny(searchTasks);
+                    var results = await nextTask;
+                    searchTasks.Remove(nextTask);
+                    //var sw2 = Stopwatch.StartNew();
+                    combinedSymbols.AddRange(results.Where(x => (x.Key.Length == 8 && int.TryParse(x.Key, out outParse)) ||
+                                                        (x.Key.Length == 10 && x.Key[8] == '_' && int.TryParse(x.Key[9].ToString(), out outParse))));
+                   // Debug.Print(String.Format("Where took {0} sec.", sw2.ElapsedMilliseconds / 1000.0));
+                }
+
+                _styleItems = combinedSymbols;
+            }
+            catch(Exception ex)
+            {
+                Debug.Print(ex.Message);
+            }
+            _progressDialog.Hide();
+
+            //Debug.Print(string.Format("Search took {0} sec.", sw.ElapsedMilliseconds / 1000.0));
         }
 
         #endregion
